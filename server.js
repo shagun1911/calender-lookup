@@ -183,7 +183,7 @@ function computeSlots(events, date, workStart, workEnd, slotMin) {
 // MAIN — reads from DB, fetches both calendars, returns CST
 // =====================================================
 async function getAvailability(schoolId, date, opts = {}) {
-  const { workStart = 10, workEnd = 17, slotMin = 15 } = opts;
+  const { workStart = 10, workEnd = 17, slotMin = 30 } = opts;
 
   // 1. Read integrations from MongoDB
   const integrations = await Integration.find({ schoolId, connected: true }).lean();
@@ -250,7 +250,7 @@ app.get("/api/calendar/availability", async (req, res) => {
     const data = await getAvailability(schoolId, date, {
       workStart: parseInt(startHour) || 10,
       workEnd: parseInt(endHour) || 17,
-      slotMin: parseInt(slotMins) || 15,
+      slotMin: parseInt(slotMins) || 30,
     });
 
     res.json({ success: true, data });
