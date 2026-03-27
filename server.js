@@ -134,7 +134,7 @@ async function fetchOutlookEvents(doc, date) {
 }
 
 // =====================================================
-// COMPUTE AVAILABLE SLOTS — 10 AM to 5 PM CST
+// COMPUTE AVAILABLE SLOTS — 6 AM to 6 PM CST
 // =====================================================
 function computeSlots(events, date, workStart, workEnd, slotMin) {
   const ds = DateTime.fromISO(date, { zone: TZ }).set({ hour: workStart, minute: 0, second: 0 });
@@ -183,7 +183,7 @@ function computeSlots(events, date, workStart, workEnd, slotMin) {
 // MAIN — reads from DB, fetches both calendars, returns CST
 // =====================================================
 async function getAvailability(schoolId, date, opts = {}) {
-  const { workStart = 10, workEnd = 17, slotMin = 30 } = opts;
+  const { workStart = 6, workEnd = 18, slotMin = 30 } = opts;
 
   // 1. Read integrations from MongoDB
   const integrations = await Integration.find({ schoolId, connected: true }).lean();
@@ -248,8 +248,8 @@ app.get("/api/calendar/availability", async (req, res) => {
       return res.status(400).json({ success: false, error: "Invalid schoolId" });
 
     const data = await getAvailability(schoolId, date, {
-      workStart: parseInt(startHour) || 10,
-      workEnd: parseInt(endHour) || 17,
+      workStart: parseInt(startHour) || 6,
+      workEnd: parseInt(endHour) || 18,
       slotMin: parseInt(slotMins) || 30,
     });
 
