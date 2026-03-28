@@ -33,6 +33,16 @@ const integrationSchema = new mongoose.Schema(
 );
 const Integration = mongoose.model("Integration", integrationSchema);
 
+const schoolSchema = new mongoose.Schema(
+  {
+    name: String,
+    businessHoursStart: { type: String, default: "09:00" },
+    businessHoursEnd: { type: String, default: "18:00" },
+  },
+  { strict: false, collection: "schools" }
+);
+const School = mongoose.model("School", schoolSchema);
+
 // =====================================================
 // GOOGLE — refresh token & fetch events
 // =====================================================
@@ -241,9 +251,21 @@ function computeSlots(events, date, workStart, workEnd, slotMin) {
 // MAIN — reads from DB, fetches both calendars, returns CST
 // =====================================================
 async function getAvailability(schoolId, date, opts = {}) {
-  const { workStart = 6, workEnd = 18, slotMin = 30 } = opts;
+  // 1. Fetch school info for business hours
+  const school = await School.findById(schoolId).lean();
+  if (!school) throw new Error("School not found");
 
-  // 1. Read integrations from MongoDB
+  const {
+    businessHoursStart = "09:00",
+    businessHoursEnd = "18:00"
+  } = school;
+
+  // Parse "HH:mm" to integer hour
+  const workStart = parseInt(businessHoursStart.split(":")[0]) || 9;
+  const workEnd = parseInt(businessHoursEnd.split(":")[0]) || 18;
+  const { slotMin = 30 } = opts;
+
+  // 2. Read integrations from MongoDB
   const integrations = await Integration.find({ schoolId, connected: true }).lean();
   const gDoc = integrations.find((i) => i.type === "google");
   const oDoc = integrations.find((i) => i.type === "outlook");
@@ -271,9 +293,9 @@ async function getAvailability(schoolId, date, opts = {}) {
   return {
     date,
     timezone: "CST (America/Chicago)",
-    workingHours: {
-      start: `${workStart > 12 ? workStart - 12 : workStart}:00 ${workStart >= 12 ? "PM" : "AM"} CST`,
-      end: `${workEnd > 12 ? workEnd - 12 : workEnd}:00 ${workEnd >= 12 ? "PM" : "AM"} CST`,
+    bookingHours: {
+      bookingOpening: `${workStart > 12 ? workStart - 12 : workStart}:00 ${workStart >= 12 ? "PM" : "AM"} CST`,
+      bookingClose: `${workEnd > 12 ? workEnd - 12 : workEnd}:00 ${workEnd >= 12 ? "PM" : "AM"} CST`,
     },
     bookedSlots: booked,
     availableSlots: available,
@@ -296,7 +318,7 @@ app.use(express.json());
 
 app.get("/api/calendar/availability", async (req, res) => {
   try {
-    const { schoolId, date, startHour, endHour, slotMins } = req.query;
+    const { schoolId, date, slotMins } = req.query;
 
     if (!schoolId || !date)
       return res.status(400).json({ success: false, error: "Required: schoolId, date (YYYY-MM-DD)" });
@@ -306,8 +328,6 @@ app.get("/api/calendar/availability", async (req, res) => {
       return res.status(400).json({ success: false, error: "Invalid schoolId" });
 
     const data = await getAvailability(schoolId, date, {
-      workStart: parseInt(startHour) || 6,
-      workEnd: parseInt(endHour) || 18,
       slotMin: parseInt(slotMins) || 30,
     });
 
