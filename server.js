@@ -12,6 +12,9 @@ const PORT = process.env.PORT || 3001;
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://LOVJEET:LOVJEETMONGO@cluster0.zpzj90m.mongodb.net/montessorienrollmentai";
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "569716849235-go0bkijujaj44085dnpv71g6otdnmc4f.apps.googleusercontent.com";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "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";
+const OUTLOOK_CLIENT_ID = process.env.OUTLOOK_CLIENT_ID || "a076c798-fb39-4847-b1bb-af4c5295c0d5";
+const OUTLOOK_CLIENT_SECRET = process.env.OUTLOOK_CLIENT_SECRET;
+const OUTLOOK_TENANT_ID = process.env.OUTLOOK_TENANT_ID || "common";
 const TZ = "America/Chicago"; // CST
 
 // =====================================================
@@ -97,26 +100,81 @@ async function fetchGoogleEvents(doc, date) {
 }
 
 // =====================================================
-// OUTLOOK — fetch events
+// OUTLOOK — refresh token & fetch events
 // =====================================================
+async function refreshOutlookToken(doc) {
+  const refreshToken = doc.config.refreshToken;
+  if (!refreshToken) throw new Error("No Outlook refresh token in DB — please reconnect.");
+
+  const params = new URLSearchParams({
+    client_id: OUTLOOK_CLIENT_ID,
+    client_secret: OUTLOOK_CLIENT_SECRET,
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    scope: "https://graph.microsoft.com/Calendars.ReadWrite offline_access",
+  });
+
+  const res = await axios.post(
+    `https://login.microsoftonline.com/${OUTLOOK_TENANT_ID}/oauth2/v2.0/token`,
+    params.toString(),
+    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+  );
+
+  const newAccessToken = res.data.access_token;
+  const newRefreshToken = res.data.refresh_token; // Microsoft issues a new one (sliding window)
+  const expiresOn = Date.now() + res.data.expires_in * 1000;
+
+  await Integration.updateOne(
+    { _id: doc._id },
+    {
+      $set: {
+        "config.accessToken": newAccessToken,
+        "config.expiresOn": expiresOn,
+        ...(newRefreshToken && { "config.refreshToken": newRefreshToken }),
+      },
+    }
+  );
+  console.log("[Outlook] Token refreshed & saved to DB");
+  return newAccessToken;
+}
+
+async function getOutlookToken(doc) {
+  // Refresh proactively if expiring within 60 seconds
+  if (Date.now() + 60000 >= (doc.config.expiresOn || 0)) {
+    return refreshOutlookToken(doc);
+  }
+  return doc.config.accessToken;
+}
+
 async function fetchOutlookEvents(doc, date) {
   const dayStart = DateTime.fromISO(date, { zone: TZ }).startOf("day");
   const dayEnd = dayStart.endOf("day");
-  const token = doc.config.accessToken;
-  if (!token) throw new Error("No Outlook access token in DB");
 
-  const res = await axios.get("https://graph.microsoft.com/v1.0/me/calendarview", {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Prefer: `outlook.timezone="${TZ}"`,
-    },
-    params: {
-      startDateTime: dayStart.toUTC().toISO(),
-      endDateTime: dayEnd.toUTC().toISO(),
-      $orderby: "start/dateTime",
-      $top: 100,
-    },
-  });
+  const call = (t) =>
+    axios.get("https://graph.microsoft.com/v1.0/me/calendarview", {
+      headers: {
+        Authorization: `Bearer ${t}`,
+        Prefer: `outlook.timezone="${TZ}"`,
+      },
+      params: {
+        startDateTime: dayStart.toUTC().toISO(),
+        endDateTime: dayEnd.toUTC().toISO(),
+        $orderby: "start/dateTime",
+        $top: 100,
+      },
+    });
+
+  let token = await getOutlookToken(doc);
+  let res;
+  try {
+    res = await call(token);
+  } catch (err) {
+    if (err.response?.status === 401) {
+      // Force-refresh and retry once
+      token = await refreshOutlookToken(doc);
+      res = await call(token);
+    } else throw err;
+  }
 
   return (res.data.value || []).map((ev) => {
     const s = DateTime.fromISO(ev.start.dateTime, { zone: TZ });
