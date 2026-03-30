@@ -263,7 +263,8 @@ async function getAvailability(schoolId, date, opts = {}) {
   // Parse "HH:mm" to integer hour
   const workStart = parseInt(businessHoursStart.split(":")[0]) || 9;
   const workEnd = parseInt(businessHoursEnd.split(":")[0]) || 18;
-  const { slotMin = 30 } = opts;
+  const requestedSlotMin = Number(opts.slotMin);
+  const slotMin = Number.isFinite(requestedSlotMin) && requestedSlotMin >= 30 ? requestedSlotMin : 30;
 
   // 2. Read integrations from MongoDB
   const integrations = await Integration.find({ schoolId, connected: true }).lean();
@@ -327,8 +328,9 @@ app.get("/api/calendar/availability", async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(schoolId))
       return res.status(400).json({ success: false, error: "Invalid schoolId" });
 
+    const parsedSlotMins = parseInt(slotMins, 10);
     const data = await getAvailability(schoolId, date, {
-      slotMin: parseInt(slotMins) || 30,
+      slotMin: Number.isFinite(parsedSlotMins) && parsedSlotMins >= 30 ? parsedSlotMins : 30,
     });
 
     res.json({ success: true, data });
